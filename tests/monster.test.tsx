@@ -171,3 +171,64 @@ test('전설 몬스터는 이름이 금색, 일반 몬스터는 아니다', asyn
     await pane.unmount()
   }
 })
+
+test('진화하면 입력칸 위에서 알아챔 → 깜빡임 → 축하 순서로 연출하고 다시 걷는다', async ($, on) => {
+  const seed = SPECIES.find(s => s.name === '새싹뿔')
+  if (seed === undefined) throw new Error('setup')
+  mock.store(on, {
+    game: {
+      ...newGame(),
+      party: [{ uid: 1, species: seed.id, level: 15, exp: 0, hatchLeft: 0, isStarter: true }],
+      activeUid: 1,
+      nextUid: 2,
+      items: { candy: 1 },
+    },
+  })
+  const clock = mock.clock(on)
+  on('command.register', () => ({ value: { command: 'monster' } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+
+  const pane = await $.ui.mount({
+    plugin: 'token-monster',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'monster',
+    props: {
+      title: '몬스터',
+      isFocused: true,
+      bodyColumns: 80,
+      placement: 'dock',
+      scroll: { offset: 0, bodyRows: 40 },
+      view: {},
+    },
+  })
+  await pane.press({ key: 'use-candy' })
+  await pane.unmount()
+
+  const band = await $.ui.mount({
+    plugin: 'token-monster',
+    surface: 'terminal',
+    component: 'AbovePrompt',
+    requestId: 'band',
+    props: {
+      hasSurvey: false,
+      isWorking: false,
+      maxRows: 20,
+      bodyColumns: 60,
+      scroll: { offset: 0, bodyRows: 20 },
+      view: {},
+    },
+  })
+  const has = async (text: RegExp) => (await band.find({ type: 'Text', text })) !== undefined
+
+  expect(await has(/어라\? 새싹뿔의 모습이/)).toBe(true)
+  await clock.advance(400 * 5)
+  expect(await has(/새싹뿔이\(가\) 진화하고 있다/)).toBe(true)
+  await clock.advance(400 * 11)
+  expect(await has(/축하합니다! 새싹뿔은\(는\) 덩굴뿔\(으\)로 진화했다/)).toBe(true)
+  await clock.advance(400 * 5)
+  expect(await has(/축하합니다/)).toBe(false)
+  expect(await has(/Lv\.16/)).toBe(true)
+  await band.unmount()
+})

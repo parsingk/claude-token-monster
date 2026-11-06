@@ -1,8 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Game, ItemId, Mon } from '../types'
+import type { Evolving, Game, ItemId, Mon } from '../types'
 import { ELEMENT_COLOR, ELEMENT_NAME, SPECIES, speciesOf } from './data'
+import { evoFrame, sparkle } from './evolution'
 import {
   ITEMS, ITEM_ORDER, MAX_LEVEL, buy, expToNext, gainTokens, nameOf, newGame,
   setActive, tokensOf, useItem,
@@ -21,17 +22,34 @@ const tick = atom({ plugin: 'token-monster', key: 'tick' } as const, 0)
 const selected = atom({ plugin: 'token-monster', key: 'selected' } as const, null)
 const message = atom({ plugin: 'token-monster', key: 'message' } as const, '')
 const isHidden = atom({ plugin: 'token-monster', key: 'isHidden' } as const, false)
+const evolving = atom({ plugin: 'token-monster', key: 'evolving' } as const, null)
 
 const loadGame = async ($: EngineInterface): Promise<Game> => {
   const stored = (await $.store.get(STORE_KEY)) as Game | undefined
   return stored ?? newGame()
 }
 
+/** 이번 변경에서 진화한 몬스터: 알이 아니었고, 종이 바뀐 것 */
+const evolutionsOf = (before: Game, after: Game): Omit<Evolving, 'start'>[] =>
+  after.party.flatMap(mon => {
+    const old = before.party.find(m => m.uid === mon.uid)
+    return old !== undefined && old.species >= 0 && old.species !== mon.species
+      ? [{ uid: mon.uid, from: old.species, to: mon.species }]
+      : []
+  })
+
 // 진행 상황의 정본은 $.store (여러 세션이 같이 쓴다). 매번 다시 읽고 고쳐 쓴다.
+// 진화가 있었으면 입력칸 위 진화 연출을 시작한다(여럿이면 마지막 것).
 const mutate = async ($: EngineInterface, change: (game: Game) => Outcome): Promise<string> => {
-  const result = change(await loadGame($))
+  const before = await loadGame($)
+  const result = change(before)
   await $.store.set(STORE_KEY, result.game)
   await update($, gameAtom, () => result.game)
+  const last = evolutionsOf(before, result.game).at(-1)
+  if (last !== undefined) {
+    const start = await read($, tick)
+    await update($, evolving, () => ({ ...last, start }))
+  }
   return result.message
 }
 
@@ -96,11 +114,41 @@ export const register: Register = on => {
     if (e.props.hasSurvey || game === null || (await read($, isHidden))) return next(e)
 
     const { Box, Text, Button } = $.ui.resolve(e)
+    const t = await read($, tick)
+
+    // 진화 연출 중이면 걷기 대신 가운데에 멈춰서 연출을 그린다.
+    const evo = await read($, evolving)
+    if (evo !== null) {
+      const from = speciesOf(evo.from)
+      const to = speciesOf(evo.to)
+      const k = t - evo.start
+      const frame = evoFrame(k, from.name, to.name)
+      if (frame !== undefined) {
+        const shown = frame.showsTo ? to : from
+        const body = sprite(shown, 0, false)
+        const rows = frame.hasSparkles ? sparkle(body, k) : body
+        const width = Math.max(...rows.map(r => r.length))
+        const x = Math.max(0, Math.floor((e.props.bodyColumns - width) / 2))
+        const color = frame.isGlowing ? '#ffffff' : ELEMENT_COLOR[shown.element]
+        return (
+          <Box flexDirection="column">
+            {rows.map(row => (
+              <Text color={color} bold={frame.isGlowing} wrap="truncate">
+                {' '.repeat(x) + (row === '' ? ' ' : row)}
+              </Text>
+            ))}
+            <Text bold color={frame.hasSparkles ? GOLD : undefined} wrap="truncate">
+              {frame.text}
+            </Text>
+          </Box>
+        )
+      }
+    }
+
     const mon = game.party.find(m => m.uid === game.activeUid) ?? game.party[0]
     if (mon === undefined) return next(e)
     const species = speciesFor(mon)
 
-    const t = await read($, tick)
     const range = Math.max(0, e.props.bodyColumns - spriteWidth(species) - 1)
     const period = Math.max(1, range * 2)
     const phase = t % period

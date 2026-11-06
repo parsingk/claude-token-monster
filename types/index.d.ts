@@ -24,6 +24,9 @@ export type Game = {
   dex: number[]
 }
 
+/** 입력칸 위에서 보여 주는 진화 연출. start 는 연출이 시작된 tick. */
+export type Evolving = { uid: number; from: number; to: number; start: number }
+
 declare module 'claude-code' {
   interface PluginState {
     'token-monster': {
@@ -32,6 +35,7 @@ declare module 'claude-code' {
       selected: number | null
       message: string
       isHidden: boolean
+      evolving: Evolving | null
     }
   }
 }
