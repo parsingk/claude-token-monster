@@ -1,6 +1,6 @@
 {
   "name": "token-monster",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "토큰을 쓸수록 자라는 몬스터가 입력칸 위를 걸어 다닌다",
   "types": "./types/index.d.ts"
 }

@@ -83,3 +83,35 @@ test('입력칸 위에 몬스터와 상태 줄을 그린다', async ($, on) => {
     await ui.unmount()
   }
 })
+
+test('가방의 노란 문구는 5초 뒤 사라진다', async ($, on) => {
+  mock.store(on)
+  const clock = mock.clock(on)
+  on('command.register', () => ({ value: { command: 'monster' } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+
+  const ui = await $.ui.mount({
+    plugin: 'token-monster',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'monster',
+    props: {
+      title: '몬스터',
+      isFocused: true,
+      bodyColumns: 80,
+      placement: 'dock',
+      scroll: { offset: 0, bodyRows: 40 },
+      view: {},
+    },
+  })
+  await ui.press({ key: 'buy-egg' })
+  expect((await ui.find({ type: 'Text', text: /코인이 모자랍니다/ })) !== undefined).toBe(true)
+
+  await clock.advance(4_000)
+  expect((await ui.find({ type: 'Text', text: /코인이 모자랍니다/ })) !== undefined).toBe(true)
+
+  await clock.advance(1_500)
+  expect(await ui.find({ type: 'Text', text: /코인이 모자랍니다/ })).toBe(undefined)
+  await ui.unmount()
+})

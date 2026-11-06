@@ -13,6 +13,7 @@ import { sprite, spriteWidth } from './sprite'
 const PANE = 'monster'
 const STORE_KEY = 'game'
 const WALK_MS = 400
+const MESSAGE_MS = 5000
 
 // 저장 형식이 바뀌면 shape 태그를 올린다: 예전 값은 null 로 읽힌다.
 const gameAtom = atom({ plugin: 'token-monster', key: 'game' } as const, null, { shape: 'game-1' })
@@ -131,7 +132,13 @@ export const register: Register = on => {
     const hidden = await read($, isHidden)
 
     const act = (change: (g: Game) => Outcome) => {
-      void mutate($, change).then(text => update($, message, () => text))
+      void mutate($, change).then(async text => {
+        await update($, message, () => text)
+        // 5초 뒤 지운다. 그사이 다른 문구로 바뀌었으면 그 문구는 남긴다.
+        $.clock.after(MESSAGE_MS, () => {
+          void update($, message, current => (current === text ? '' : current))
+        })
+      })
     }
 
     return (
