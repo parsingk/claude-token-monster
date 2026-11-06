@@ -36,7 +36,7 @@ test('토큰이 코인·경험치가 되고 레벨 16 에서 진화한다', () =
 test('알을 사면 진화 전 단계가 깨어나고, 돌로 진화한다', () => {
   let game = { ...newGame(), coins: 10_000 }
   game = buy(game, 'egg').game
-  expect(game.coins).toBe(9_700)
+  expect(game.coins).toBe(7_000)
   // 0.5 → 전설 아님, EGG_POOL 가운데에서
   game = gainTokens(game, EGG_HATCH_TOKENS, fixed(0.5)).game
   const hatched = game.party[1]

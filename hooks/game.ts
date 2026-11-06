@@ -10,14 +10,14 @@ export const LEGEND_CHANCE = 0.01
 export const MAX_LEVEL = 100
 
 export const ITEMS: Record<ItemId, { name: string; price: number }> = {
-  egg: { name: '알', price: 300 },
-  candy: { name: '성장사탕', price: 200 },
-  fire: { name: '불꽃돌', price: 500 },
-  water: { name: '물결돌', price: 500 },
-  thunder: { name: '번개돌', price: 500 },
-  leaf: { name: '새싹돌', price: 500 },
-  moon: { name: '달빛돌', price: 500 },
-  cord: { name: '연결끈', price: 800 },
+  egg: { name: '알', price: 3000 },
+  candy: { name: '성장사탕', price: 2000 },
+  fire: { name: '불꽃돌', price: 5000 },
+  water: { name: '물결돌', price: 5000 },
+  thunder: { name: '번개돌', price: 5000 },
+  leaf: { name: '새싹돌', price: 5000 },
+  moon: { name: '달빛돌', price: 5000 },
+  cord: { name: '연결끈', price: 8000 },
 }
 
 export const ITEM_ORDER: ItemId[] = ['egg', 'candy', 'fire', 'water', 'thunder', 'leaf', 'moon', 'cord']
