@@ -1,5 +1,10 @@
 {
   "name": "claude-token-monster",
   "owner": { "name": "parsingk" },
-  "plugins": [{ "name": "token-monster", "source": "./" }]
+  "plugins": [
+    {
+      "name": "token-monster",
+      "source": { "source": "github", "repo": "parsingk/claude-token-monster" }
+    }
+  ]
 }
