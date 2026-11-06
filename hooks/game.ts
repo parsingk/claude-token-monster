@@ -5,7 +5,7 @@ import { EGG_POOL, LEGENDS, STARTERS, speciesOf } from './data'
 export const TOKENS_PER_COIN = 1000
 export const TOKENS_PER_EXP = 100
 export const STARTER_HATCH_TOKENS = 3000
-export const EGG_HATCH_TOKENS = 20000
+export const EGG_HATCH_TOKENS = 1_000_000
 export const LEGEND_CHANCE = 0.01
 export const MAX_LEVEL = 100
 
