@@ -115,3 +115,59 @@ test('가방의 노란 문구는 5초 뒤 사라진다', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: /코인이 모자랍니다/ })).toBe(undefined)
   await ui.unmount()
 })
+
+test('전설 몬스터는 이름이 금색, 일반 몬스터는 아니다', async ($, on) => {
+  const legend = SPECIES.find(s => s.name === '태양사자')
+  const normal = SPECIES.find(s => s.name === '새싹뿔')
+  if (legend === undefined || normal === undefined) throw new Error('setup')
+  const mon = (uid: number, species: number) => ({ uid, species, level: 5, exp: 0, hatchLeft: 0, isStarter: false })
+  mock.store(on, {
+    game: {
+      ...newGame(),
+      party: [mon(1, legend.id), mon(2, normal.id)],
+      activeUid: 1,
+      nextUid: 3,
+    },
+  })
+  mock.clock(on)
+  on('command.register', () => ({ value: { command: 'monster' } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const band = await $.ui.mount({
+      plugin: 'token-monster',
+      surface,
+      component: 'AbovePrompt',
+      requestId: 'band',
+      props: {
+        hasSurvey: false,
+        isWorking: false,
+        maxRows: 20,
+        bodyColumns: 60,
+        scroll: { offset: 0, bodyRows: 20 },
+        view: {},
+      },
+    })
+    expect((await band.find({ type: 'Text', text: /^태양사자$/ }))?.props.color).toBe('#ffc400')
+    await band.unmount()
+
+    const pane = await $.ui.mount({
+      plugin: 'token-monster',
+      surface,
+      component: 'Pane',
+      requestId: 'monster',
+      props: {
+        title: '몬스터',
+        isFocused: true,
+        bodyColumns: 80,
+        placement: 'dock',
+        scroll: { offset: 0, bodyRows: 40 },
+        view: {},
+      },
+    })
+    expect((await pane.find({ type: 'Text', text: /^새싹뿔$/ }))?.props.color).toBe(undefined)
+    expect((await pane.find({ type: 'Text', text: /^태양사자$/ }))?.props.color).toBe('#ffc400')
+    await pane.unmount()
+  }
+})

@@ -40,11 +40,18 @@ const bar = (value: number, max: number, width: number): string => {
   return '#'.repeat(filled) + '-'.repeat(width - filled)
 }
 
-const describe = (mon: Mon): string => {
+const GOLD = '#ffc400'
+
+/** 이름 뒤에 붙는 부분. 알은 이름('알')까지 이 안에 든다. */
+const detail = (mon: Mon): string => {
   if (mon.species < 0) return `알 · 깨어나기까지 토큰 ${Math.max(0, mon.hatchLeft).toLocaleString()}개`
   const exp = mon.level >= MAX_LEVEL ? 'MAX' : `[${bar(mon.exp, expToNext(mon.level), 10)}]`
-  return `${nameOf(mon)} Lv.${mon.level} ${exp}`
+  return ` Lv.${mon.level} ${exp}`
 }
+
+/** 전설은 이름을 금색으로 */
+const nameColor = (mon: Mon): string | undefined =>
+  mon.species >= 0 && speciesOf(mon.species).isLegendary ? GOLD : undefined
 
 const speciesFor = (mon: Mon | undefined) => (mon === undefined || mon.species < 0 ? undefined : speciesOf(mon.species))
 
@@ -110,9 +117,16 @@ export const register: Register = on => {
           </Text>
         ))}
         <Box flexDirection="row" gap={1}>
-          <Text wrap="truncate">
-            {describe(mon)} · {game.coins.toLocaleString()}코인
-          </Text>
+          <Box flexDirection="row">
+            {mon.species >= 0 && (
+              <Text color={nameColor(mon)} bold={nameColor(mon) !== undefined}>
+                {nameOf(mon)}
+              </Text>
+            )}
+            <Text wrap="truncate">
+              {detail(mon)} · {game.coins.toLocaleString()}코인
+            </Text>
+          </Box>
           <Button key="bag" label="가방" plain onPress={() => void $.ui.open({ id: PANE, title: '몬스터' })} />
           <Button key="hide" label="숨기기" plain onPress={() => void update($, isHidden, () => true)} />
         </Box>
@@ -159,7 +173,12 @@ export const register: Register = on => {
           {game.party.map(mon => (
             <Button key={`mon-${mon.uid}`} plain onPress={() => void update($, selected, () => mon.uid)}>
               {mon.uid === picked?.uid ? '> ' : '  '}
-              {describe(mon)}
+              {mon.species >= 0 && (
+                <Text color={nameColor(mon)} bold={nameColor(mon) !== undefined}>
+                  {nameOf(mon)}
+                </Text>
+              )}
+              {detail(mon)}
               {mon.uid === game.activeUid ? <Text dimColor> (함께 다니는 중)</Text> : ''}
             </Button>
           ))}
@@ -172,11 +191,19 @@ export const register: Register = on => {
                 {row === '' ? ' ' : row}
               </Text>
             ))}
-            <Text>
-              {pickedSpecies === undefined
-                ? describe(picked)
-                : `No.${String(pickedSpecies.id).padStart(3, '0')} ${pickedSpecies.name} · ${ELEMENT_NAME[pickedSpecies.element]} 속성${pickedSpecies.isLegendary ? ' · 전설' : ''}`}
-            </Text>
+            {pickedSpecies === undefined ? (
+              <Text>{detail(picked)}</Text>
+            ) : (
+              <Box flexDirection="row">
+                <Text>No.{String(pickedSpecies.id).padStart(3, '0')} </Text>
+                <Text color={nameColor(picked)} bold={nameColor(picked) !== undefined}>
+                  {pickedSpecies.name}
+                </Text>
+                <Text>
+                  {` · ${ELEMENT_NAME[pickedSpecies.element]} 속성${pickedSpecies.isLegendary ? ' · 전설' : ''}`}
+                </Text>
+              </Box>
+            )}
             {pickedSpecies !== undefined && pickedSpecies.evolutions.length > 0 && (
               <Text dimColor>
                 진화:{' '}
