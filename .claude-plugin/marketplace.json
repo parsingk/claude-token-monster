@@ -1,0 +1,5 @@
+{
+  "name": "claude-token-monster",
+  "owner": { "name": "parsingk" },
+  "plugins": [{ "name": "token-monster", "source": "./" }]
+}
