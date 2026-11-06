@@ -4,7 +4,7 @@
   "plugins": [
     {
       "name": "token-monster",
-      "source": { "source": "github", "repo": "parsingk/claude-token-monster" }
+      "source": { "source": "url", "url": "https://github.com/parsingk/claude-token-monster.git" }
     }
   ]
 }
