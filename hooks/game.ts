@@ -194,6 +194,24 @@ export const setActive = (before: Game, uid: number): Outcome => {
   return { game: { ...before, activeUid: uid }, message: `${nameOf(mon)}이(가) 함께 다닙니다.` }
 }
 
+/** 함께 다니는 몬스터와 마지막 한 마리는 내보낼 수 없다 (가방이 비지 않게) */
+export const canRelease = (game: Game, uid: number): boolean =>
+  game.party.length > 1 && uid !== game.activeUid && game.party.some(m => m.uid === uid)
+
+/** 내보낸 몬스터(알 포함)는 가방에서 사라지고 돌아오지 않는다. 도감 기록은 남는다. */
+export const release = (before: Game, uid: number): Outcome => {
+  const mon = before.party.find(m => m.uid === uid)
+  if (mon === undefined) return { game: before, message: '그 몬스터가 없습니다.' }
+  if (uid === before.activeUid) {
+    return { game: before, message: '함께 다니는 몬스터는 내보낼 수 없습니다. 먼저 다른 몬스터와 함께 다니세요.' }
+  }
+  if (!canRelease(before, uid)) return { game: before, message: '마지막 한 마리는 내보낼 수 없습니다.' }
+  return {
+    game: { ...before, party: before.party.filter(m => m.uid !== uid) },
+    message: `${nameOf(mon)}을(를) 내보냈습니다.`,
+  }
+}
+
 /** turn 사용량을 토큰 수로. cache read 는 싸므로 1/10 만 친다. */
 export const tokensOf = (usage: {
   input_tokens: number

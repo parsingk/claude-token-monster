@@ -5,16 +5,26 @@ import type { Evolving, Game, ItemId, Mon } from '../types'
 import { ELEMENT_COLOR, ELEMENT_NAME, SPECIES, speciesOf } from './data'
 import { evoFrame, sparkle } from './evolution'
 import {
-  ITEMS, ITEM_ORDER, MAX_LEVEL, buy, expToNext, gainTokens, nameOf, newGame,
-  setActive, tokensOf, useItem,
+  ITEMS, ITEM_ORDER, MAX_LEVEL, buy, canRelease, expToNext, gainTokens, nameOf, newGame,
+  release, setActive, tokensOf, useItem,
 } from './game'
 import type { Outcome } from './game'
+import { MIN_SHOWN, buttonCells, cells, clamp, flowRows, listStep, listWindow, textRows } from './layout'
 import { sprite, spriteWidth } from './sprite'
 
 const PANE = 'monster'
 const STORE_KEY = 'game'
 const WALK_MS = 400
 const MESSAGE_MS = 5000
+// 가방에 그리는 글자. 그릴 때와 줄 수를 셀 때 같은 글자를 쓴다.
+const SHOP = '상점'
+const RATE_HINT = '토큰 1,000개 = 1코인 · 토큰 100개 = 경험치 1 (cache read 는 1/10)'
+const WALK = '함께 다니기'
+const RELEASE = '내보내기'
+const RELEASE_YES = '정말 내보내기 (되돌릴 수 없음)'
+const RELEASE_NO = '취소'
+const UP = '▲'
+const DOWN = '▼'
 
 // 저장 형식이 바뀌면 shape 태그를 올린다: 예전 값은 null 로 읽힌다.
 const gameAtom = atom({ plugin: 'token-monster', key: 'game' } as const, null, { shape: 'game-1' })
@@ -23,6 +33,19 @@ const selected = atom({ plugin: 'token-monster', key: 'selected' } as const, nul
 const message = atom({ plugin: 'token-monster', key: 'message' } as const, '')
 const isHidden = atom({ plugin: 'token-monster', key: 'isHidden' } as const, false)
 const evolving = atom({ plugin: 'token-monster', key: 'evolving' } as const, null)
+const listTop = atom({ plugin: 'token-monster', key: 'listTop' } as const, null)
+const releasing = atom({ plugin: 'token-monster', key: 'releasing' } as const, null)
+
+// 가방에 마지막으로 그린 목록 창. ui.scroll 이 이걸 보고 목록만 움직인다.
+//   top·count·total = 몇 번째부터 몇 마리를 보여 줬는지 / firstRow = 목록 첫 줄 / offset = 가방 전체가 스크롤된 줄
+let shown = { top: 0, count: 0, total: 0, firstRow: 0, offset: 0 }
+
+/** 가방을 연다. 목록은 고른 몬스터가 보이는 자리에서 다시 시작한다. */
+const openBag = async ($: EngineInterface) => {
+  await update($, listTop, () => null)
+  await update($, releasing, () => null)
+  return $.ui.open({ id: PANE, title: '몬스터' })
+}
 
 const loadGame = async ($: EngineInterface): Promise<Game> => {
   const stored = (await $.store.get(STORE_KEY)) as Game | undefined
@@ -73,6 +96,11 @@ const nameColor = (mon: Mon): string | undefined =>
 
 const speciesFor = (mon: Mon | undefined) => (mon === undefined || mon.species < 0 ? undefined : speciesOf(mon.species))
 
+/** 가지고 있어서 몬스터에게 쓸 수 있는 아이템 (알은 쓰는 것이 아니다) */
+const usableItems = (game: Game): ItemId[] => ITEM_ORDER.filter(id => id !== 'egg' && (game.items[id] ?? 0) > 0)
+
+const useLabel = (game: Game, id: ItemId): string => `${ITEMS[id].name} 쓰기 (${game.items[id] ?? 0})`
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -90,8 +118,26 @@ export const register: Register = on => {
 
   on('command.run', { command: 'monster' }, async $ => {
     await update($, isHidden, () => false)
-    await $.ui.open({ id: PANE, title: '몬스터' })
+    await openBag($)
     return { text: '몬스터 가방을 열었습니다.' }
+  })
+
+  // 가방 위에서 휠을 굴리면 가방 전체가 아니라 몬스터 목록만 움직인다.
+  // 목록이 끝에 닿았거나, 가방이 화면보다 길 때 목록 밖에서 굴린 것은 엔진(가방 전체 스크롤)에 넘긴다.
+  on('ui.scroll', { requestId: PANE }, async ($, e, next) => {
+    const maxTop = shown.total - shown.count
+    if (e.component !== 'Pane' || maxTop <= 0) return next(e)
+
+    const isBagFitting = e.contentRows <= e.bodyRows
+    const row = e.pointer === undefined ? undefined : shown.offset + e.pointer.row
+    const isOverList = row === undefined || (row >= shown.firstRow && row < shown.firstRow + shown.count)
+    if (!isBagFitting && !isOverList) return next(e)
+
+    const top = clamp((await read($, listTop)) ?? shown.top, 0, maxTop)
+    const moved = clamp(top + listStep(e.by, e.bodyRows, shown.count, shown.total), 0, maxTop)
+    if (moved === top) return isBagFitting ? {} : next(e)
+    await update($, listTop, () => moved)
+    return {}
   })
 
   on('turn.complete', async ($, e, next) => {
@@ -175,23 +221,28 @@ export const register: Register = on => {
               {detail(mon)} · {game.coins.toLocaleString()}코인
             </Text>
           </Box>
-          <Button key="bag" label="가방" plain onPress={() => void $.ui.open({ id: PANE, title: '몬스터' })} />
+          <Button key="bag" label="가방" plain onPress={() => void openBag($)} />
           <Button key="hide" label="숨기기" plain onPress={() => void update($, isHidden, () => true)} />
         </Box>
       </Box>
     )
   })
 
+  // 가방. 위에서부터: 코인·상점(고정) → 몬스터 목록(여기만 스크롤) → 고른 몬스터(고정).
+  // 전체가 가방 높이(bodyRows) 안에 들어가도록 목록에 보여 줄 마릿수를 정한다.
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
     const game = await read($, gameAtom)
     if (game === null) return <Text dimColor>불러오는 중...</Text>
 
+    const columns = e.props.bodyColumns
     const pickedUid = await read($, selected)
     const picked = game.party.find(m => m.uid === pickedUid) ?? game.party.find(m => m.uid === game.activeUid)
     const pickedSpecies = speciesFor(picked)
     const note = await read($, message)
     const hidden = await read($, isHidden)
+    const isAsking = picked !== undefined && (await read($, releasing)) === picked.uid
+    const wantedTop = await read($, listTop)
 
     const act = (change: (g: Game) => Outcome) => {
       void mutate($, change).then(async text => {
@@ -203,23 +254,103 @@ export const register: Register = on => {
       })
     }
 
+    // 그릴 글자를 먼저 정한다. 같은 글자로 줄 수도 세기 때문이다.
+    const total = game.party.length
+    const title = `가방 속 몬스터 (${total})`
+    const buys = ITEM_ORDER.map(id => ({ id, label: `${ITEMS[id].name} ${ITEMS[id].price}` }))
+    const body = sprite(pickedSpecies, 1, false)
+    const evoText =
+      pickedSpecies === undefined || pickedSpecies.evolutions.length === 0
+        ? ''
+        : `진화: ${pickedSpecies.evolutions
+            .map(evo => `${typeof evo.method === 'number' ? `Lv.${evo.method}` : ITEMS[evo.method].name} → ${speciesOf(evo.to).name}`)
+            .join(', ')}`
+    const isReleasable = picked !== undefined && canRelease(game, picked.uid)
+    const actionLabels =
+      picked === undefined
+        ? []
+        : isAsking
+          ? [RELEASE_YES, RELEASE_NO]
+          : [
+              ...(picked.uid !== game.activeUid ? [WALK] : []),
+              ...usableItems(game).map(id => useLabel(game, id)),
+              ...(isReleasable ? [RELEASE] : []),
+            ]
+
+    // 목록에 줄 수 있는 줄 수 = 가방 높이 - (위쪽 코인·상점 + 아래쪽 고른 몬스터).
+    // 넉넉한 배치로 MIN_SHOWN 마리도 못 보여 주면 빈 줄·환율 안내·몬스터 그림을 뺀 촘촘한 배치로 바꾼다.
+    const shopRows = flowRows([cells(SHOP), ...buys.map(b => buttonCells(b.label))], columns)
+    const titleRows = flowRows([cells(title), buttonCells(UP), buttonCells(DOWN), cells(`${total}–${total}번째`)], columns)
+    const rowsOf = (isTight: boolean) => {
+      const gap = isTight ? 0 : 1
+      const noteRows = note !== '' ? textRows(note, columns) : isTight ? 0 : textRows(RATE_HINT, columns)
+      const first = 1 + shopRows + noteRows + (hidden ? 1 : 0) + gap + titleRows
+      const below =
+        picked === undefined
+          ? 0
+          : gap +
+            (isTight ? 0 : body.length) +
+            1 +
+            (evoText === '' ? 0 : textRows(evoText, columns)) +
+            flowRows(actionLabels.map(buttonCells), columns)
+      return { first, room: e.props.scroll.bodyRows - first - below }
+    }
+    const roomy = rowsOf(false)
+    const isTight = roomy.room < Math.min(total, MIN_SHOWN)
+    const { first: firstRow, room } = isTight ? rowsOf(true) : roomy
+    const win = listWindow(total, room)
+    const maxTop = total - win.count
+    // 한 번도 움직이지 않았으면 고른 몬스터가 가운데쯤 보이는 자리에서 시작한다
+    const pickedIndex = picked === undefined ? 0 : game.party.indexOf(picked)
+    const top = clamp(wantedTop ?? pickedIndex - Math.floor(win.count / 2), 0, maxTop)
+    const page = Math.max(1, win.count - 1)
+    shown = { top, count: win.count, total, firstRow, offset: e.props.scroll.offset }
+
+    const moveList = (by: number) => void update($, listTop, () => clamp(top + by, 0, maxTop))
+    // 몬스터를 고르거나 내보내도 목록이 제자리에 있도록 지금 자리를 붙잡아 둔다
+    const holdList = () => void update($, listTop, () => top)
+    const stopAsking = () => void update($, releasing, () => null)
+
     return (
-      <Box flexDirection="column" gap={1}>
+      <Box flexDirection="column" gap={isTight ? 0 : 1}>
         <Box flexDirection="column">
-          <Text bold>
+          <Text bold wrap="truncate">
             {game.coins.toLocaleString()}코인 · 누적 토큰 {game.totalTokens.toLocaleString()} · 도감 {game.dex.length}/
             {SPECIES.length}
           </Text>
-          {note !== '' && <Text color="#ffd54f">{note}</Text>}
+          <Box flexDirection="row" columnGap={1} flexWrap="wrap">
+            <Text bold>{SHOP}</Text>
+            {buys.map(b => (
+              <Button key={`buy-${b.id}`} label={b.label} onPress={() => act(g => buy(g, b.id))} />
+            ))}
+          </Box>
+          {note !== '' ? <Text color="#ffd54f">{note}</Text> : !isTight && <Text dimColor>{RATE_HINT}</Text>}
           {hidden && (
             <Button key="show" label="입력칸 위에 다시 보이기" onPress={() => void update($, isHidden, () => false)} />
           )}
         </Box>
 
         <Box flexDirection="column">
-          <Text bold>가방 속 몬스터 ({game.party.length})</Text>
-          {game.party.map(mon => (
-            <Button key={`mon-${mon.uid}`} plain onPress={() => void update($, selected, () => mon.uid)}>
+          <Box flexDirection="row" columnGap={1} flexWrap="wrap">
+            <Text bold>{title}</Text>
+            {win.isCut && <Button key="list-up" label={UP} dimColor={top === 0} onPress={() => moveList(-page)} />}
+            {win.isCut && <Button key="list-down" label={DOWN} dimColor={top === maxTop} onPress={() => moveList(page)} />}
+            {win.isCut && (
+              <Text dimColor>
+                {top + 1}–{top + win.count}번째
+              </Text>
+            )}
+          </Box>
+          {game.party.slice(top, top + win.count).map(mon => (
+            <Button
+              key={`mon-${mon.uid}`}
+              plain
+              onPress={() => {
+                holdList()
+                stopAsking()
+                void update($, selected, () => mon.uid)
+              }}
+            >
               {mon.uid === picked?.uid ? '> ' : '  '}
               {mon.species >= 0 && (
                 <Text color={nameColor(mon)} bold={nameColor(mon) !== undefined}>
@@ -234,11 +365,12 @@ export const register: Register = on => {
 
         {picked !== undefined && (
           <Box flexDirection="column">
-            {sprite(pickedSpecies, 1, false).map(row => (
-              <Text color={pickedSpecies === undefined ? '#f5f5dc' : ELEMENT_COLOR[pickedSpecies.element]}>
-                {row === '' ? ' ' : row}
-              </Text>
-            ))}
+            {!isTight &&
+              body.map(row => (
+                <Text color={pickedSpecies === undefined ? '#f5f5dc' : ELEMENT_COLOR[pickedSpecies.element]}>
+                  {row === '' ? ' ' : row}
+                </Text>
+              ))}
             {pickedSpecies === undefined ? (
               <Text>{detail(picked)}</Text>
             ) : (
@@ -252,38 +384,36 @@ export const register: Register = on => {
                 </Text>
               </Box>
             )}
-            {pickedSpecies !== undefined && pickedSpecies.evolutions.length > 0 && (
-              <Text dimColor>
-                진화:{' '}
-                {pickedSpecies.evolutions
-                  .map(evo => `${typeof evo.method === 'number' ? `Lv.${evo.method}` : ITEMS[evo.method].name} → ${speciesOf(evo.to).name}`)
-                  .join(', ')}
-              </Text>
-            )}
-            <Box flexDirection="row" gap={1} flexWrap="wrap">
-              {picked.uid !== game.activeUid && (
-                <Button key="walk" label="함께 다니기" variant="primary" onPress={() => act(g => setActive(g, picked.uid))} />
-              )}
-              {ITEM_ORDER.filter(id => id !== 'egg' && (game.items[id] ?? 0) > 0).map(id => (
+            {evoText !== '' && <Text dimColor>{evoText}</Text>}
+            {isAsking ? (
+              // 내보내기는 되돌릴 수 없으므로 한 번 더 묻는다
+              <Box flexDirection="row" columnGap={1} flexWrap="wrap">
                 <Button
-                  key={`use-${id}`}
-                  label={`${ITEMS[id].name} 쓰기 (${game.items[id]})`}
-                  onPress={() => act(g => useItem(g, picked.uid, id as ItemId))}
+                  key="release-yes"
+                  label={RELEASE_YES}
+                  onPress={() => {
+                    holdList()
+                    stopAsking()
+                    act(g => release(g, picked.uid))
+                  }}
                 />
-              ))}
-            </Box>
+                <Button key="release-no" label={RELEASE_NO} onPress={stopAsking} />
+              </Box>
+            ) : (
+              <Box flexDirection="row" columnGap={1} flexWrap="wrap">
+                {picked.uid !== game.activeUid && (
+                  <Button key="walk" label={WALK} variant="primary" onPress={() => act(g => setActive(g, picked.uid))} />
+                )}
+                {usableItems(game).map(id => (
+                  <Button key={`use-${id}`} label={useLabel(game, id)} onPress={() => act(g => useItem(g, picked.uid, id))} />
+                ))}
+                {isReleasable && (
+                  <Button key="release" label={RELEASE} onPress={() => void update($, releasing, () => picked.uid)} />
+                )}
+              </Box>
+            )}
           </Box>
         )}
-
-        <Box flexDirection="column">
-          <Text bold>상점</Text>
-          <Box flexDirection="row" gap={1} flexWrap="wrap">
-            {ITEM_ORDER.map(id => (
-              <Button key={`buy-${id}`} label={`${ITEMS[id].name} ${ITEMS[id].price}`} onPress={() => act(g => buy(g, id))} />
-            ))}
-          </Box>
-          <Text dimColor>토큰 1,000개 = 1코인 · 토큰 100개 = 경험치 1 (cache read 는 1/10)</Text>
-        </Box>
       </Box>
     )
   })

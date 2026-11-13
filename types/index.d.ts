@@ -36,6 +36,10 @@ declare module 'claude-code' {
       message: string
       isHidden: boolean
       evolving: Evolving | null
+      /** 가방 목록에서 맨 위에 보이는 몬스터의 순서. null 이면 고른 몬스터가 보이는 자리. */
+      listTop: number | null
+      /** "정말 내보낼까요" 를 묻고 있는 몬스터의 uid */
+      releasing: number | null
     }
   }
 }
