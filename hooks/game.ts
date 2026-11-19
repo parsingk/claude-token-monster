@@ -212,6 +212,47 @@ export const release = (before: Game, uid: number): Outcome => {
   }
 }
 
+/** 같은 종 가운데 남길 한 마리를 고르는 순서: 레벨 높은 것 → 함께 다니는 것 → 경험치 많은 것 (같으면 먼저 얻은 것) */
+const isBetterKeeper = (mon: Mon, best: Mon, activeUid: number): boolean => {
+  if (mon.level !== best.level) return mon.level > best.level
+  if ((mon.uid === activeUid) !== (best.uid === activeUid)) return mon.uid === activeUid
+  return mon.exp > best.exp
+}
+
+/**
+ * 한 번에 내보낼 중복 몬스터: 같은 종이 둘 이상 있을 때, 남길 한 마리를 뺀 Lv.1 들.
+ * 알, 전설, 함께 다니는 몬스터는 넣지 않는다.
+ */
+export const spares = (game: Game): Mon[] => {
+  const keepers = new Map<number, Mon>()
+  const counts = new Map<number, number>()
+  for (const mon of game.party) {
+    if (mon.species < 0) continue
+    const best = keepers.get(mon.species)
+    if (best === undefined || isBetterKeeper(mon, best, game.activeUid)) keepers.set(mon.species, mon)
+    counts.set(mon.species, (counts.get(mon.species) ?? 0) + 1)
+  }
+  return game.party.filter(
+    mon =>
+      mon.species >= 0 &&
+      mon.level === 1 &&
+      mon.uid !== game.activeUid &&
+      (counts.get(mon.species) ?? 0) > 1 &&
+      keepers.get(mon.species) !== mon &&
+      !speciesOf(mon.species).isLegendary,
+  )
+}
+
+/** 중복된 Lv.1 몬스터를 한 번에 내보낸다. 종마다 한 마리는 남으므로 가방이 비지 않는다. */
+export const releaseSpares = (before: Game): Outcome => {
+  const gone = new Set(spares(before).map(mon => mon.uid))
+  if (gone.size === 0) return { game: before, message: '내보낼 중복 Lv.1 몬스터가 없습니다.' }
+  return {
+    game: { ...before, party: before.party.filter(mon => !gone.has(mon.uid)) },
+    message: `중복된 Lv.1 몬스터 ${gone.size}마리를 내보냈습니다.`,
+  }
+}
+
 /** turn 사용량을 토큰 수로. cache read 는 싸므로 1/10 만 친다. */
 export const tokensOf = (usage: {
   input_tokens: number

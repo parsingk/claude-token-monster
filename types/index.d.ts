@@ -38,8 +38,8 @@ declare module 'claude-code' {
       evolving: Evolving | null
       /** 가방 목록에서 맨 위에 보이는 몬스터의 순서. null 이면 고른 몬스터가 보이는 자리. */
       listTop: number | null
-      /** "정말 내보낼까요" 를 묻고 있는 몬스터의 uid */
-      releasing: number | null
+      /** "정말 내보낼까요" 를 묻고 있는 대상: 몬스터 한 마리의 uid, 또는 중복된 Lv.1 전부('spares') */
+      releasing: number | 'spares' | null
     }
   }
 }

@@ -6,7 +6,7 @@ import { ELEMENT_COLOR, ELEMENT_NAME, SPECIES, speciesOf } from './data'
 import { evoFrame, sparkle } from './evolution'
 import {
   ITEMS, ITEM_ORDER, MAX_LEVEL, buy, canRelease, expToNext, gainTokens, nameOf, newGame,
-  release, setActive, tokensOf, useItem,
+  release, releaseSpares, setActive, spares, tokensOf, useItem,
 } from './game'
 import type { Outcome } from './game'
 import { MIN_SHOWN, buttonCells, cells, clamp, flowRows, listStep, listWindow, textRows } from './layout'
@@ -241,7 +241,8 @@ export const register: Register = on => {
     const pickedSpecies = speciesFor(picked)
     const note = await read($, message)
     const hidden = await read($, isHidden)
-    const isAsking = picked !== undefined && (await read($, releasing)) === picked.uid
+    const asked = await read($, releasing)
+    const isAsking = picked !== undefined && asked === picked.uid
     const wantedTop = await read($, listTop)
 
     const act = (change: (g: Game) => Outcome) => {
@@ -266,6 +267,11 @@ export const register: Register = on => {
             .map(evo => `${typeof evo.method === 'number' ? `Lv.${evo.method}` : ITEMS[evo.method].name} → ${speciesOf(evo.to).name}`)
             .join(', ')}`
     const isReleasable = picked !== undefined && canRelease(game, picked.uid)
+    // 중복된 Lv.1 몬스터를 한 번에 내보내는 버튼은 그런 몬스터가 있을 때만 제목 줄에 나온다
+    const spareCount = spares(game).length
+    const sparesLabel = `중복 Lv.1 ${spareCount}마리 내보내기`
+    const isAskingSpares = asked === 'spares' && spareCount > 0
+    const sparesAsk = `중복된 Lv.1 몬스터 ${spareCount}마리를 내보냅니다. 종마다 레벨이 가장 높은 한 마리는 남습니다.`
     const actionLabels =
       picked === undefined
         ? []
@@ -280,11 +286,23 @@ export const register: Register = on => {
     // 목록에 줄 수 있는 줄 수 = 가방 높이 - (위쪽 코인·상점 + 아래쪽 고른 몬스터).
     // 넉넉한 배치로 MIN_SHOWN 마리도 못 보여 주면 빈 줄·환율 안내·몬스터 그림을 뺀 촘촘한 배치로 바꾼다.
     const shopRows = flowRows([cells(SHOP), ...buys.map(b => buttonCells(b.label))], columns)
-    const titleRows = flowRows([cells(title), buttonCells(UP), buttonCells(DOWN), cells(`${total}–${total}번째`)], columns)
-    const rowsOf = (isTight: boolean) => {
+    const askRows = isAskingSpares
+      ? textRows(sparesAsk, columns) + flowRows([buttonCells(RELEASE_YES), buttonCells(RELEASE_NO)], columns)
+      : 0
+    // 제목 줄: 목록이 잘릴 때만 ▲ ▼ 와 "몇 번째" 가 붙는다
+    const titleRowsOf = (isCut: boolean) =>
+      flowRows(
+        [
+          cells(title),
+          ...(isCut ? [buttonCells(UP), buttonCells(DOWN), cells(`${total}–${total}번째`)] : []),
+          ...(spareCount > 0 ? [buttonCells(sparesLabel)] : []),
+        ],
+        columns,
+      )
+    const rowsOf = (isTight: boolean, isCut: boolean) => {
       const gap = isTight ? 0 : 1
       const noteRows = note !== '' ? textRows(note, columns) : isTight ? 0 : textRows(RATE_HINT, columns)
-      const first = 1 + shopRows + noteRows + (hidden ? 1 : 0) + gap + titleRows
+      const first = 1 + shopRows + noteRows + (hidden ? 1 : 0) + gap + titleRowsOf(isCut) + askRows
       const below =
         picked === undefined
           ? 0
@@ -295,9 +313,13 @@ export const register: Register = on => {
             flowRows(actionLabels.map(buttonCells), columns)
       return { first, room: e.props.scroll.bodyRows - first - below }
     }
-    const roomy = rowsOf(false)
+    const fit = (isTight: boolean) => {
+      const whole = rowsOf(isTight, false)
+      return listWindow(total, whole.room).isCut ? rowsOf(isTight, true) : whole
+    }
+    const roomy = fit(false)
     const isTight = roomy.room < Math.min(total, MIN_SHOWN)
-    const { first: firstRow, room } = isTight ? rowsOf(true) : roomy
+    const { first: firstRow, room } = isTight ? fit(true) : roomy
     const win = listWindow(total, room)
     const maxTop = total - win.count
     // 한 번도 움직이지 않았으면 고른 몬스터가 가운데쯤 보이는 자리에서 시작한다
@@ -340,7 +362,33 @@ export const register: Register = on => {
                 {top + 1}–{top + win.count}번째
               </Text>
             )}
+            {spareCount > 0 && (
+              <Button
+                key="release-spares"
+                label={sparesLabel}
+                onPress={() => {
+                  holdList()
+                  void update($, releasing, () => 'spares' as const)
+                }}
+              />
+            )}
           </Box>
+          {/* 확인 줄은 제목 줄 아래에 따로 둔다: 같은 자리를 두 번 눌러도 내보내지지 않게 */}
+          {isAskingSpares && <Text color="#ffd54f">{sparesAsk}</Text>}
+          {isAskingSpares && (
+            <Box flexDirection="row" columnGap={1} flexWrap="wrap">
+              <Button
+                key="release-spares-yes"
+                label={RELEASE_YES}
+                onPress={() => {
+                  holdList()
+                  stopAsking()
+                  act(releaseSpares)
+                }}
+              />
+              <Button key="release-spares-no" label={RELEASE_NO} onPress={stopAsking} />
+            </Box>
+          )}
           {game.party.slice(top, top + win.count).map(mon => (
             <Button
               key={`mon-${mon.uid}`}

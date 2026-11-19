@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import { EGG_POOL, LEGENDS, SPECIES, STARTERS, speciesOf } from '../hooks/data'
-import { EGG_HATCH_TOKENS, buy, gainTokens, newGame, release, useItem } from '../hooks/game'
+import { EGG_HATCH_TOKENS, buy, gainTokens, newGame, release, releaseSpares, spares, useItem } from '../hooks/game'
 import { cells, flowRows, listWindow, textRows } from '../hooks/layout'
 
 const fixed = (value: number) => () => value
@@ -473,5 +473,91 @@ test('내보내기는 한 번 더 묻고, 함께 다니는 몬스터에는 버�
   expect(await has('mon-3')).toBe(true)
   expect((await ui.find({ type: 'Text', text: /가방 속 몬스터/ }))?.text).toBe('가방 속 몬스터 (2)')
   expect((await ui.find({ type: 'Text', text: /내보냈습니다/ })) !== undefined).toBe(true)
+  await ui.unmount()
+})
+
+// ---- 중복된 Lv.1 몬스터 한 번에 내보내기 ----
+
+test('중복된 Lv.1 만 골라낸다: 종마다 한 마리는 남기고, 알·전설·함께 다니는 몬스터는 뺀다', () => {
+  const idOf = (name: string) => SPECIES.find(s => s.name === name)?.id ?? -99
+  const mon = (uid: number, name: string, level = 1, exp = 0) => ({
+    uid,
+    species: idOf(name),
+    level,
+    exp,
+    hatchLeft: 0,
+    isStarter: false,
+  })
+  const egg = (uid: number) => ({ uid, species: -1, level: 1, exp: 0, hatchLeft: 500, isStarter: false })
+  const game = {
+    ...newGame(),
+    party: [
+      // 전부 Lv.1 → 함께 다니는 1번이 남고 2·3번이 나간다
+      mon(1, '새싹뿔'),
+      mon(2, '새싹뿔'),
+      mon(3, '새싹뿔'),
+      // 레벨이 높은 4번이 남고 5·6번이 나간다
+      mon(4, '불씨룡', 20),
+      mon(5, '불씨룡'),
+      mon(6, '불씨룡'),
+      // 한 마리뿐이면 중복이 아니다
+      mon(7, '물방울게'),
+      // 레벨이 같으면 경험치가 많은 9번이 남는다
+      mon(8, '찌릿여우'),
+      mon(9, '찌릿여우', 1, 30),
+      // 전설과 알은 건드리지 않는다
+      mon(10, '태양사자'),
+      mon(11, '태양사자'),
+      egg(12),
+      egg(13),
+      // 중복이어도 Lv.1 이 아니면 남는다
+      mon(14, '꼬물실', 3),
+      mon(15, '꼬물실', 3),
+    ],
+    activeUid: 1,
+    nextUid: 16,
+  }
+  expect(spares(game).map(m => m.uid)).toEqual([2, 3, 5, 6, 8])
+
+  const done = releaseSpares(game)
+  expect(done.game.party.map(m => m.uid)).toEqual([1, 4, 7, 9, 10, 11, 12, 13, 14, 15])
+  expect(done.message).toBe('중복된 Lv.1 몬스터 5마리를 내보냈습니다.')
+  expect(releaseSpares(done.game).game).toBe(done.game)
+})
+
+test('중복 Lv.1 한 번에 내보내기는 중복이 있을 때만 버튼이 나오고, 한 번 더 묻는다', async ($, on) => {
+  // 1번은 Lv.5 로 함께 다니고, 2~4번은 같은 종 Lv.1
+  const game = {
+    ...gameWith(4),
+    party: [monAt(1), ...[2, 3, 4].map(uid => ({ ...monAt(uid), level: 1 }))],
+  }
+  mock.store(on, { game })
+  mock.clock(on)
+  on('command.register', () => ({ value: { command: 'monster' } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+
+  const ui = await $.ui.mount(paneOf(40))
+  const has = async (key: string) => (await ui.find({ key })) !== undefined
+  expect((await ui.find({ key: 'release-spares' }))?.props.label).toBe('중복 Lv.1 3마리 내보내기')
+
+  await ui.press({ key: 'release-spares' })
+  expect(await has('release-spares-yes')).toBe(true)
+  expect((await ui.find({ type: 'Text', text: /종마다/ })) !== undefined).toBe(true)
+  await ui.press({ key: 'release-spares-no' })
+  expect(await has('release-spares-yes')).toBe(false)
+
+  // 묻는 중에 몬스터를 고르면 묻기를 그만둔다
+  await ui.press({ key: 'release-spares' })
+  await ui.press({ key: 'mon-2' })
+  expect(await has('release-spares-yes')).toBe(false)
+  expect(await has('mon-4')).toBe(true)
+
+  await ui.press({ key: 'release-spares' })
+  await ui.press({ key: 'release-spares-yes' })
+  expect((await ui.find({ type: 'Text', text: /가방 속 몬스터/ }))?.text).toBe('가방 속 몬스터 (1)')
+  expect((await ui.find({ type: 'Text', text: /3마리를 내보냈습니다/ })) !== undefined).toBe(true)
+  expect(await has('release-spares')).toBe(false)
+  expect(await has('mon-1')).toBe(true)
   await ui.unmount()
 })
