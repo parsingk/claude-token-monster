@@ -40,8 +40,10 @@ claude plugin update token-monster --scope user
 - Claude 가 답할 때마다 쓴 토큰이 코인과 경험치가 됩니다.
   토큰 1,000개 = 1코인, 토큰 100개 = 경험치 1 (cache read 토큰은 1/10 만 칩니다).
 - 레벨업하고, 진화 레벨에 닿으면 진화합니다.
-  진화할 때는 입력칸 위에서 약 8초 동안 연출이 나옵니다: "…어라?" → 진화 전후 모습이 흰빛으로 깜빡임 → 반짝이와 축하 문구.
+  진화할 때는 입력칸 위에서 약 8초 동안 연출이 나옵니다: "…어라?" → 진화 전후 모습이 밝은 빛으로 깜빡임 → 반짝이와 축하 문구.
 - 전설 몬스터는 이름이 금색으로 표시됩니다.
+- 몬스터는 점으로 찍은 그림(픽셀 아트)이고, 151마리가 마리마다 크기·모양·색이 다릅니다.
+  터미널이 낮아 입력칸 위에 자리가 모자라면 그림은 빼고, 그림 아래의 상태 줄(코인과 `가방`·`숨기기` 버튼이 있는 줄)만 나옵니다.
 - `/monster` 또는 입력칸 위 `가방` 버튼으로 가방·상점을 엽니다.
   가방은 위에서부터 코인·상점 → 몬스터 목록 → 고른 몬스터 순서입니다.
   - 상점: 알 3,000, 성장사탕 2,000, 진화의 돌 5종(불꽃·물결·번개·새싹·달빛) 각 5,000, 연결끈 8,000
@@ -73,9 +75,13 @@ claude plugin update token-monster --scope user
 
 ## 고치기
 
-- 몬스터 목록·진화: `hooks/data.ts`
+- 몬스터 목록·진화: `hooks/data.ts`.
+  몬스터를 더하면 `hooks/art/` 에 같은 이름의 그림도 넣어야 합니다. 그림이 없으면 테스트 "151마리 모두 그림이 있다" 가 실패합니다
+  (마릿수가 바뀌면 이 테스트의 151 도 고칩니다).
 - 밸런스(코인·경험치·가격·부화 토큰): `hooks/game.ts` 맨 위 상수
-- 모습: `hooks/sprite.ts`, 걷는 속도: `hooks/register.tsx` 의 `WALK_MS`
+- 모습: `hooks/art/` (그리는 규칙은 `docs/superpowers/specs/2026-11-19-pixel-monsters-design.md`),
+  미리보기: `node tools/sheet.mjs out.png`, 걷는 속도: `hooks/register.tsx` 의 `WALK_MS`
+  - 미리보기 도구에는 Node 24 가 필요합니다. `hooks/art/` 의 `.ts` 파일을 Node 의 타입 지우기(type stripping)로 바로 읽기 때문입니다.
 - 가방 배치와 목록 스크롤: `hooks/register.tsx` 의 가방(`Pane`) 부분, 줄 수 계산은 `hooks/layout.ts`
 
 테스트: `claude plugin test .`

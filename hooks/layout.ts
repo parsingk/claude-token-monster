@@ -86,3 +86,37 @@ export const listStep = (by: number, bodyRows: number, count: number, total: num
   if (size === bodyRows) return Math.sign(by) * Math.max(1, count - 1)
   return by
 }
+
+/** 그림과 설명 사이 칸 수 */
+export const PICTURE_GAP = 2
+/** 설명 칸이 이보다 좁으면 그림 아래에 쌓는다 */
+export const MIN_INFO_COLUMNS = 24
+
+/** 고른 몬스터 설명의 줄 수: 이름 줄 + 진화 안내(없으면 0) + 버튼 줄. 이름 줄과 진화 안내는 낱말 사이에서 바뀐다. */
+export const infoRowsOf = (o: { nameLine: string; evoText: string; actionWidths: number[] }, columns: number): number =>
+  textRows(o.nameLine, columns) + (o.evoText === '' ? 0 : textRows(o.evoText, columns)) + flowRows(o.actionWidths, columns)
+
+/**
+ * 가방에서 고른 몬스터 부분(그림 + 이름·진화 안내·버튼)의 배치.
+ * 나란히: rows = max(그림 줄, 설명 줄), infoColumns = columns − pictureColumns − PICTURE_GAP
+ * 쌓기:   rows = 그림 줄 + 설명 줄,     infoColumns = columns
+ * 설명 줄 = infoRowsOf(…, infoColumns). nameLine = 첫 줄의 글자 그대로("No.### 이름 · 속성", 알은 알 줄).
+ */
+export const pickedLayout = (o: {
+  columns: number
+  pictureColumns: number
+  pictureRows: number
+  nameLine: string
+  evoText: string
+  actionWidths: number[]
+}): { isSideBySide: boolean; infoColumns: number; rows: number } => {
+  const sideColumns = o.columns - o.pictureColumns - PICTURE_GAP
+  const isSideBySide = sideColumns >= MIN_INFO_COLUMNS
+  const infoColumns = isSideBySide ? sideColumns : o.columns
+  const infoRows = infoRowsOf(o, infoColumns)
+  return {
+    isSideBySide,
+    infoColumns,
+    rows: isSideBySide ? Math.max(o.pictureRows, infoRows) : o.pictureRows + infoRows,
+  }
+}

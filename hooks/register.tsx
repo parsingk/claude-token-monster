@@ -2,15 +2,20 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Evolving, Game, ItemId, Mon } from '../types'
-import { ELEMENT_COLOR, ELEMENT_NAME, SPECIES, speciesOf } from './data'
-import { evoFrame, sparkle } from './evolution'
+import { ELEMENT_NAME, SPECIES, speciesOf } from './data'
+import { artOf } from './art'
+import type { Art } from './art/types'
+import { evoFrame, sparkleSides } from './evolution'
 import {
   ITEMS, ITEM_ORDER, MAX_LEVEL, buy, canRelease, expToNext, gainTokens, nameOf, newGame,
   release, releaseSpares, setActive, spares, tokensOf, useItem,
 } from './game'
 import type { Outcome } from './game'
-import { MIN_SHOWN, buttonCells, cells, clamp, flowRows, listStep, listWindow, textRows } from './layout'
-import { sprite, spriteWidth } from './sprite'
+import {
+  MIN_SHOWN, PICTURE_GAP, buttonCells, cells, clamp, flowRows, infoRowsOf, listStep, listWindow, pickedLayout, textRows,
+} from './layout'
+import { halfBlocks, standRows, svgOf, walkRows, widthOf } from './pixels'
+import type { Pose } from './pixels'
 
 const PANE = 'monster'
 const STORE_KEY = 'game'
@@ -101,6 +106,63 @@ const usableItems = (game: Game): ItemId[] => ITEM_ORDER.filter(id => id !== 'eg
 
 const useLabel = (game: Game, id: ItemId): string => `${ITEMS[id].name} 쓰기 (${game.items[id] ?? 0})`
 
+type Els = ReturnType<EngineInterface['ui']['resolve']>
+type PictureOptions = {
+  key?: string
+  /** Svg 로 그릴지. 시험용 엔진은 터미널의 표에도 Svg 를 넣어 두므로 `'Svg' in els` 만 보지 말고 surface 도 함께 보고 정한다. */
+  isVector: boolean
+  /** Svg 를 못 보는 쪽에 읽어 줄 말 */
+  alt?: string
+  /** 그림 앞의 빈 칸 수 (걷는 자리, 가운데 맞추기) */
+  indent?: number
+  /** 그림 줄 양옆에 붙는 글자 (줄 번호 → [왼쪽, 오른쪽]) */
+  sides?: (row: number) => [string, string]
+  sideColor?: string
+}
+
+/** 점 그림을 그린다. 터미널(Svg 가 없는 표)은 줄마다 Text 하나, 그 밖에는 Svg 하나. 돌려주는 상자의 바로 아래 자식이 그림 줄이다. */
+const picture = (els: Els, art: Art, pose: Pose, options: PictureOptions) => {
+  const { Box, Text } = els
+  const { key, isVector, alt = '몬스터', indent = 0, sides, sideColor } = options
+  const gap = indent > 0 ? ' '.repeat(indent) : ''
+
+  if (isVector && 'Svg' in els) {
+    const { Svg } = els
+    const { source, width, height } = svgOf(art, { ...pose, tint: pose.tint === undefined ? undefined : '#ffffff' })
+    const [left, right] = sides?.(0) ?? ['', '']
+    return (
+      <Box key={key} flexDirection="column">
+        <Box flexDirection="row">
+          {gap !== '' && <Text>{gap}</Text>}
+          {left !== '' && <Text color={sideColor}>{left}</Text>}
+          <Svg source={source} width={width} height={height} alt={alt} />
+          {right !== '' && <Text color={sideColor}>{right}</Text>}
+        </Box>
+      </Box>
+    )
+  }
+
+  return (
+    <Box key={key} flexDirection="column">
+      {halfBlocks(art, pose).map((runs, row) => {
+        const [left, right] = sides?.(row) ?? ['', '']
+        return (
+          <Text wrap="truncate">
+            {gap}
+            {left !== '' && <Text color={sideColor}>{left}</Text>}
+            {runs.map(run => (
+              <Text color={run.color} backgroundColor={run.backgroundColor}>
+                {run.text}
+              </Text>
+            ))}
+            {right !== '' && <Text color={sideColor}>{right}</Text>}
+          </Text>
+        )
+      })}
+    </Box>
+  )
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -159,7 +221,9 @@ export const register: Register = on => {
     const game = await read($, gameAtom)
     if (e.props.hasSurvey || game === null || (await read($, isHidden))) return next(e)
 
-    const { Box, Text, Button } = $.ui.resolve(e)
+    const els = $.ui.resolve(e)
+    const { Box, Text, Button } = els
+    const isVector = 'Svg' in els && e.surface !== 'terminal'
     const t = await read($, tick)
 
     // 진화 연출 중이면 걷기 대신 가운데에 멈춰서 연출을 그린다.
@@ -170,19 +234,28 @@ export const register: Register = on => {
       const k = t - evo.start
       const frame = evoFrame(k, from.name, to.name)
       if (frame !== undefined) {
-        const shown = frame.showsTo ? to : from
-        const body = sprite(shown, 0, false)
-        const rows = frame.hasSparkles ? sparkle(body, k) : body
-        const width = Math.max(...rows.map(r => r.length))
-        const x = Math.max(0, Math.floor((e.props.bodyColumns - width) / 2))
-        const color = frame.isGlowing ? '#ffffff' : ELEMENT_COLOR[shown.element]
+        const art = artOf((frame.showsTo ? to : from).name, t)
+        // 진화 전후 중 큰 쪽에 줄 수를 맞춘다: 모습이 바뀌어도 높이가 흔들리지 않는다
+        const rows = Math.max(walkRows(artOf(from.name, t)), walkRows(artOf(to.name, t)))
+        const x = Math.max(0, Math.floor((e.props.bodyColumns - widthOf(art)) / 2))
+        // 축하 때는 그림 왼쪽에 반짝이 글자가 붙는다. 그만큼 앞의 빈 칸을 줄여 그림이 옆으로 밀리지 않게 한다.
+        const sideCells = frame.hasSparkles ? cells(sparkleSides(0, k)[0]) : 0
         return (
           <Box flexDirection="column">
-            {rows.map(row => (
-              <Text color={color} bold={frame.isGlowing} wrap="truncate">
-                {' '.repeat(x) + (row === '' ? ' ' : row)}
-              </Text>
-            ))}
+            {e.props.maxRows >= rows + 1 &&
+              picture(
+                els,
+                art,
+                { rows, lift: 0, tint: frame.isGlowing ? ('text' as const) : undefined },
+                {
+                  key: 'walker',
+                  isVector,
+                  alt: (frame.showsTo ? to : from).name,
+                  indent: Math.max(0, x - sideCells),
+                  sides: frame.hasSparkles ? row => sparkleSides(row, k) : undefined,
+                  sideColor: GOLD,
+                },
+              )}
             <Text bold color={frame.hasSparkles ? GOLD : undefined} wrap="truncate">
               {frame.text}
             </Text>
@@ -195,21 +268,26 @@ export const register: Register = on => {
     if (mon === undefined) return next(e)
     const species = speciesFor(mon)
 
-    const range = Math.max(0, e.props.bodyColumns - spriteWidth(species) - 1)
+    const art = artOf(species?.name, t)
+    // 알은 바로 선 모습과 기운 모습(4 tick 에 한 번, 1칸 넓다)을 번갈아 그린다.
+    // 걷는 범위와 줄 수는 두 모습 중 큰 쪽으로 고정한다: 모습마다 다시 재면 걷는 자리가 튄다.
+    const frames = species === undefined ? [artOf(undefined, 0), artOf(undefined, 1)] : [art]
+    // 몬스터는 1점 뜰 자리까지 쓰고, 알은 뜨지 않으므로 서 있는 줄 수만 쓴다(맨 위에 빈 줄이 생기지 않게)
+    const rows = species === undefined ? Math.max(...frames.map(standRows)) : walkRows(art)
+    const range = Math.max(0, e.props.bodyColumns - Math.max(...frames.map(widthOf)) - 1)
     const period = Math.max(1, range * 2)
     const phase = t % period
     const facingLeft = range > 0 && phase >= range
     const x = facingLeft ? period - phase : Math.min(phase, range)
-    const color = species === undefined ? '#f5f5dc' : ELEMENT_COLOR[species.element]
-    const rows = sprite(species, t, facingLeft)
+    // 몬스터는 한 tick 걸러 1점 뜨며 걷는다. 알은 뜨지 않는다.
+    const lift = species === undefined ? 0 : t % 2
+    // 그림과 상태 줄이 들어갈 자리가 모자라면 상태 줄만 그린다
+    const hasRoom = e.props.maxRows >= rows + 1
 
     return (
       <Box flexDirection="column">
-        {rows.map(row => (
-          <Text color={color} wrap="truncate">
-            {' '.repeat(x) + (row === '' ? ' ' : row)}
-          </Text>
-        ))}
+        {hasRoom &&
+          picture(els, art, { isMirrored: facingLeft, lift, rows }, { key: 'walker', isVector, alt: species?.name ?? '알', indent: x })}
         <Box flexDirection="row" gap={1}>
           <Box flexDirection="row">
             {mon.species >= 0 && (
@@ -231,7 +309,9 @@ export const register: Register = on => {
   // 가방. 위에서부터: 코인·상점(고정) → 몬스터 목록(여기만 스크롤) → 고른 몬스터(고정).
   // 전체가 가방 높이(bodyRows) 안에 들어가도록 목록에 보여 줄 마릿수를 정한다.
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button } = $.ui.resolve(e)
+    const els = $.ui.resolve(e)
+    const { Box, Text, Button } = els
+    const isVector = 'Svg' in els && e.surface !== 'terminal'
     const game = await read($, gameAtom)
     if (game === null) return <Text dimColor>불러오는 중...</Text>
 
@@ -259,7 +339,17 @@ export const register: Register = on => {
     const total = game.party.length
     const title = `가방 속 몬스터 (${total})`
     const buys = ITEM_ORDER.map(id => ({ id, label: `${ITEMS[id].name} ${ITEMS[id].price}` }))
-    const body = sprite(pickedSpecies, 1, false)
+    // 알은 기울지 않은 그림(1)을 쓴다
+    const art = artOf(pickedSpecies?.name, 1)
+    const pictureRows = standRows(art)
+    // 고른 몬스터의 첫 줄: "No.### 이름 · 속성 · 전설", 알은 알 줄. 그릴 때는 이름에만 색을 입힌다.
+    const numberText = pickedSpecies === undefined ? '' : `No.${String(pickedSpecies.id).padStart(3, '0')} `
+    const kindText =
+      pickedSpecies === undefined
+        ? ''
+        : ` · ${ELEMENT_NAME[pickedSpecies.element]} 속성${pickedSpecies.isLegendary ? ' · 전설' : ''}`
+    const nameLine =
+      picked === undefined ? '' : pickedSpecies === undefined ? detail(picked) : numberText + pickedSpecies.name + kindText
     const evoText =
       pickedSpecies === undefined || pickedSpecies.evolutions.length === 0
         ? ''
@@ -299,18 +389,15 @@ export const register: Register = on => {
         ],
         columns,
       )
+    const actionWidths = actionLabels.map(buttonCells)
+    // 고른 몬스터 부분: 넉넉하면 그림과 함께(나란히 또는 쌓아서), 촘촘하면 그림 없이 전체 폭
+    const layout = pickedLayout({ columns, pictureColumns: widthOf(art), pictureRows, nameLine, evoText, actionWidths })
+    const tightRows = infoRowsOf({ nameLine, evoText, actionWidths }, columns)
     const rowsOf = (isTight: boolean, isCut: boolean) => {
       const gap = isTight ? 0 : 1
       const noteRows = note !== '' ? textRows(note, columns) : isTight ? 0 : textRows(RATE_HINT, columns)
       const first = 1 + shopRows + noteRows + (hidden ? 1 : 0) + gap + titleRowsOf(isCut) + askRows
-      const below =
-        picked === undefined
-          ? 0
-          : gap +
-            (isTight ? 0 : body.length) +
-            1 +
-            (evoText === '' ? 0 : textRows(evoText, columns)) +
-            flowRows(actionLabels.map(buttonCells), columns)
+      const below = picked === undefined ? 0 : gap + (isTight ? tightRows : layout.rows)
       return { first, room: e.props.scroll.bodyRows - first - below }
     }
     const fit = (isTight: boolean) => {
@@ -412,54 +499,54 @@ export const register: Register = on => {
         </Box>
 
         {picked !== undefined && (
-          <Box flexDirection="column">
-            {!isTight &&
-              body.map(row => (
-                <Text color={pickedSpecies === undefined ? '#f5f5dc' : ELEMENT_COLOR[pickedSpecies.element]}>
-                  {row === '' ? ' ' : row}
-                </Text>
-              ))}
-            {pickedSpecies === undefined ? (
-              <Text>{detail(picked)}</Text>
-            ) : (
-              <Box flexDirection="row">
-                <Text>No.{String(pickedSpecies.id).padStart(3, '0')} </Text>
-                <Text color={nameColor(picked)} bold={nameColor(picked) !== undefined}>
-                  {pickedSpecies.name}
-                </Text>
+          <Box key="picked" flexDirection={!isTight && layout.isSideBySide ? 'row' : 'column'} columnGap={PICTURE_GAP}>
+            {!isTight && (
+              <Box flexShrink={0}>
+                {picture(els, art, { lift: 0, rows: pictureRows }, { key: 'picture', isVector, alt: pickedSpecies?.name ?? '알' })}
+              </Box>
+            )}
+            <Box flexDirection="column" flexGrow={1}>
+              {/* 글 한 줄(Text 하나)로 그린다: 칸이 좁으면 이름 안이 아니라 낱말 사이에서 줄이 바뀐다 */}
+              {pickedSpecies === undefined ? (
+                <Text>{nameLine}</Text>
+              ) : (
                 <Text>
-                  {` · ${ELEMENT_NAME[pickedSpecies.element]} 속성${pickedSpecies.isLegendary ? ' · 전설' : ''}`}
+                  {numberText}
+                  <Text color={nameColor(picked)} bold={nameColor(picked) !== undefined}>
+                    {pickedSpecies.name}
+                  </Text>
+                  {kindText}
                 </Text>
-              </Box>
-            )}
-            {evoText !== '' && <Text dimColor>{evoText}</Text>}
-            {isAsking ? (
-              // 내보내기는 되돌릴 수 없으므로 한 번 더 묻는다
-              <Box flexDirection="row" columnGap={1} flexWrap="wrap">
-                <Button
-                  key="release-yes"
-                  label={RELEASE_YES}
-                  onPress={() => {
-                    holdList()
-                    stopAsking()
-                    act(g => release(g, picked.uid))
-                  }}
-                />
-                <Button key="release-no" label={RELEASE_NO} onPress={stopAsking} />
-              </Box>
-            ) : (
-              <Box flexDirection="row" columnGap={1} flexWrap="wrap">
-                {picked.uid !== game.activeUid && (
-                  <Button key="walk" label={WALK} variant="primary" onPress={() => act(g => setActive(g, picked.uid))} />
-                )}
-                {usableItems(game).map(id => (
-                  <Button key={`use-${id}`} label={useLabel(game, id)} onPress={() => act(g => useItem(g, picked.uid, id))} />
-                ))}
-                {isReleasable && (
-                  <Button key="release" label={RELEASE} onPress={() => void update($, releasing, () => picked.uid)} />
-                )}
-              </Box>
-            )}
+              )}
+              {evoText !== '' && <Text dimColor>{evoText}</Text>}
+              {isAsking ? (
+                // 내보내기는 되돌릴 수 없으므로 한 번 더 묻는다
+                <Box flexDirection="row" columnGap={1} flexWrap="wrap">
+                  <Button
+                    key="release-yes"
+                    label={RELEASE_YES}
+                    onPress={() => {
+                      holdList()
+                      stopAsking()
+                      act(g => release(g, picked.uid))
+                    }}
+                  />
+                  <Button key="release-no" label={RELEASE_NO} onPress={stopAsking} />
+                </Box>
+              ) : (
+                <Box flexDirection="row" columnGap={1} flexWrap="wrap">
+                  {picked.uid !== game.activeUid && (
+                    <Button key="walk" label={WALK} variant="primary" onPress={() => act(g => setActive(g, picked.uid))} />
+                  )}
+                  {usableItems(game).map(id => (
+                    <Button key={`use-${id}`} label={useLabel(game, id)} onPress={() => act(g => useItem(g, picked.uid, id))} />
+                  ))}
+                  {isReleasable && (
+                    <Button key="release" label={RELEASE} onPress={() => void update($, releasing, () => picked.uid)} />
+                  )}
+                </Box>
+              )}
+            </Box>
           </Box>
         )}
       </Box>

@@ -36,9 +36,6 @@ export const evoFrame = (k: number, fromName: string, toName: string): EvoFrame 
   }
 }
 
-/** 몸 줄 양옆에 반짝이. 줄 수는 그대로(입력칸 위 높이가 흔들리지 않게), k 로 자리가 번갈아 바뀐다. */
-export const sparkle = (rows: string[], k: number): string[] =>
-  rows.map((row, i) => {
-    const on = (i + k) % 2 === 0
-    return `${on ? '*' : '.'} ${row} ${on ? '.' : '*'}`
-  })
+/** 몸 줄 양옆에 붙는 반짝이 글자. k 로 자리가 번갈아 바뀐다. 그림의 줄 수는 그대로다(입력칸 위 높이가 흔들리지 않게). */
+export const sparkleSides = (row: number, k: number): [string, string] =>
+  (row + k) % 2 === 0 ? ['* ', ' .'] : ['. ', ' *']
